@@ -12,13 +12,33 @@ def handle_client(conn, addr):
         for line in file:
             try:
                 message = line.strip()
-                if not message:
+                if len(message) < 5:
                     continue# Skip invalid messages (too short)
                 
-                # Basic echo response for now
-                response = f"ECHO: {message}"
-                conn.sendall(f"{len(response):03d} {response}\n".encode())
+               # Basic tuple space operations
+                with tuple_lock:
+                    if message.startswith("PUT "):
+                        _, k, v = message.split(" ", 2)
+                        tuple_space[k] = v
+                        response = f"OK ({k}, {v}) added"
+                    elif message.startswith("GET "):
+                        _, k = message.split(" ", 1)
+                        if k in tuple_space:
+                            v = tuple_space.pop(k)
+                            response = f"OK ({k}, {v}) removed"
+                        else:
+                            response = f"ERR {k} does not exist"
+                    elif message.startswith("READ "):
+                        _, k = message.split(" ", 1)
+                        if k in tuple_space:
+                            response = f"OK ({k}, {tuple_space[k]}) read"
+                        else:
+                            response = f"ERR {k} does not exist"
+                    else:
+                        response = "ERR invalid command"
                 
+                conn.sendall(f"{len(response):03d} {response}\n".encode())
+            
             except Exception as e:
                 print(f"[Error] from {addr}: {e}")
                 break
