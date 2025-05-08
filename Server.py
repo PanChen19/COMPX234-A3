@@ -6,6 +6,7 @@ tuple_space = {}
 # A lock to control concurrent access to the tuple space to avoid issues when multiple clients modify it simultaneously
 tuple_lock = threading.Lock()
 def handle_client(conn, addr):
+    global read_count
     with conn:
          # Wrap the connection into a text stream to read each line from the client
         file = conn.makefile()# Remove leading/trailing whitespace
@@ -14,33 +15,60 @@ def handle_client(conn, addr):
                 message = line.strip()
                 if len(message) < 5:
                     continue# Skip invalid messages (too short)
-                
-               # Basic tuple space operations
-                with tuple_lock:
-                    if message.startswith("PUT "):
-                        _, k, v = message.split(" ", 2)
-                        tuple_space[k] = v
-                        response = f"OK ({k}, {v}) added"
-                    elif message.startswith("GET "):
-                        _, k = message.split(" ", 1)
-                        if k in tuple_space:
-                            v = tuple_space.pop(k)
-                            response = f"OK ({k}, {v}) removed"
+                cmd_type = message[4]
+                rest = message[6:]
+               # If it's a READ or GET operation
+                if cmd_type in ("R", "G"):
+                    key = rest  # The key is the command argument
+                    with tuple_lock:
+                        # Check if the key exists in the tuple space
+                        if key in tuple_space:
+                            val = tuple_space[key]
+                            if cmd_type == "R":
+                                response = f"OK ({key}, {val}) read"  # For READ, return key-value
+                                read_count += 1  # Increment read success count
+                            else:
+                                response = f"OK ({key}, {val}) removed"  # For GET, return and remove the key
+                                del tuple_space[key]
+                                get_count += 1  # Increment get success count
                         else:
-                            response = f"ERR {k} does not exist"
-                    elif message.startswith("READ "):
-                        _, k = message.split(" ", 1)
-                        if k in tuple_space:
-                            response = f"OK ({k}, {tuple_space[k]}) read"
-                        else:
-                            response = f"ERR {k} does not exist"
+                            response = f"ERR {key} does not exist"  # If key doesn't exist, return error
+                            error_count += 1  # Increment error count
+
+                # If it's a PUT operation
+                elif cmd_type == "P":
+                    try:
+                        k, v = rest.split(" ", 1)  # Split the rest into key and value
+                    except ValueError:
+                        response = "ERR invalid format"  # If splitting fails, return error
+                        error_count += 1
                     else:
-                        response = "ERR invalid command"
-                
-                conn.sendall(f"{len(response):03d} {response}\n".encode())
-            
+                        # If key-value length exceeds limit (970 bytes), return error
+                        if len(k) + len(v) + 1 > 970:
+                            response = "ERR input too long"  # Input too long error
+                            error_count += 1
+                        else:
+                            with tuple_lock:
+                                # If the key already exists, return error
+                                if k in tuple_space:
+                                    response = f"ERR {k} already exists"
+                                    error_count += 1
+                                else:
+                                    tuple_space[k] = v  # Add the key-value pair to the tuple space
+                                    response = f"OK ({k}, {v}) added"  # Success message
+                                    put_count += 1  # Increment put success count
+
+                # If the command is invalid
+                else:
+                    response = "ERR invalid command"
+                    error_count += 1
+
+                # Encode the response to match the protocol and send it back to the client
+                response_encoded = f"{len(response)+4:03d} {response}\n"
+                conn.sendall(response_encoded.encode())  # Send the response
+
             except Exception as e:
-                print(f"[Error] from {addr}: {e}")
+                print(f"[Error] from {addr}: {e}")  # Print error message if any exception occurs
                 break
 # Function to start the server and listen on the specified port
 def start_server(port):
