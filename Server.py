@@ -5,14 +5,23 @@ import time
 tuple_space = {}
 # A lock to control concurrent access to the tuple space to avoid issues when multiple clients modify it simultaneously
 tuple_lock = threading.Lock()
+# Global variables to track statistics like client count, operation count, count for each operation, error count
+client_count = 0
+operation_count = 0
+read_count = 0
+get_count = 0
+put_count = 0
+error_count = 0
 def handle_client(conn, addr):
-    global read_count
+    global client_count, operation_count, read_count, get_count, put_count, error_count
+    client_count += 1  # Increment client count when a new client connects
     with conn:
          # Wrap the connection into a text stream to read each line from the client
         file = conn.makefile()# Remove leading/trailing whitespace
         for line in file:
             try:
                 message = line.strip()
+                operation_count += 1  # Increment operation count for each request
                 if len(message) < 5:
                     continue# Skip invalid messages (too short)
                 cmd_type = message[4]
@@ -70,6 +79,26 @@ def handle_client(conn, addr):
             except Exception as e:
                 print(f"[Error] from {addr}: {e}")  # Print error message if any exception occurs
                 break
+# Function to periodically print server statistics (every 10 seconds)
+def print_summary():
+    while True:
+        time.sleep(10)  # Wait for 10 seconds
+        with tuple_lock:
+            num_tuples = len(tuple_space)  # Count the number of tuples in the tuple space
+            total_key_len = sum(len(k) for k in tuple_space)  # Total length of all keys
+            total_val_len = sum(len(v) for v in tuple_space.values())  # Total length of all values
+            avg_key = total_key_len / num_tuples if num_tuples else 0  # Average key length
+            avg_val = total_val_len / num_tuples if num_tuples else 0  # Average value length
+            avg_tuple = (total_key_len + total_val_len) / num_tuples if num_tuples else 0  # Average tuple size
+
+        # Print server statistics
+        print(f"[Summary]")
+        print(f" Tuples: {num_tuples}")  # Number of tuples in tuple space
+        print(f" Avg tuple size: {avg_tuple:.2f}, key: {avg_key:.2f}, value: {avg_val:.2f}")  # Average tuple size, key, and value
+        print(f" Clients: {client_count}")  # Number of clients connected
+        print(f" Total ops: {operation_count}, READ: {read_count}, GET: {get_count}, PUT: {put_count}")  # Operation statistics
+        print(f" Errors: {error_count}")  # Number of errors
+        print("-" * 40)
 # Function to start the server and listen on the specified port
 def start_server(port):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)# Create a TCP server socket
